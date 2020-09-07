@@ -1,0 +1,208 @@
+---
+title: "customer segmentation"
+author: "Victor Mandela"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Credit analysis of transaction data: K-Means clustering approach.
+
+![Segmatation of oranges](orange_segments.jpg)
+
+Recency, Frequency, & Monetary (RFM) is one of the techniques that can be used for customer segmentation and is one of the conventional ways for segmentation that been used for a long time.
+
+Recency refers to when the customer did the most recent transaction using our product.
+
+Frequency refers to how often customers do transactions using our product
+
+Monetary Value refers to how much does a customer spend in our product
+
+RFM method is straightforward; we only have to transform our data (usually in the shape of transactional data) into data frame consists with three variables Recent Transaction, Transaction Frequency, and Transaction Amount (Monetary Values).
+
+Transactional data itself is the data which records or captures every transaction that been done by customers. Typically, transactional data consists of transaction time, transaction location, how much amount our customers spend, which merchant the deal took place, and every detail that can be recorded at the moment transactions were made.
+
+Let see our transactional dataset that later will be used as our study case. Our dataset is a 2016 credit card transactional data from every customer. Transactions dataset consist of 24 features which recorded during every transaction our customers made. Even if we have many features on our dataset; we will not use all of them and only use small numbers of features which can be transformed into Recency, Frequency, and Monetary Values instead.
+
+
+```{r The data and package, include=FALSE}
+library(tidyverse) # manipulation
+library(janitor)  #cleaning data
+library(patchwork)  #For joining plots
+library(cluster)  # for kmeans
+library(factoextra) #for visualization of kmeans
+library(scales)  #for decorating graph and table scales
+credit_data <- read.csv("transactions.csv")
+```
+
+[Link to dataset:](https://www.kaggle.com/derykurniawan/credit-card-transaction) https://www.kaggle.com/derykurniawan/credit-card-transaction
+
+```{r Column names, echo=FALSE}
+credit_data %>% 
+  clean_names() %>%
+  colnames() %>% 
+  as_tibble() %>% 
+  mutate(value = str_replace_all(value, "_", " "),
+         value = str_to_sentence(value)) %>% 
+  knitr::kable(caption = "Features of transactional data", col.names = c("Feature Names"))
+```
+
+If we return to our description of RFM features; we only have to keep customerId, transactionDate, and transactionAmount to create Recency, Frequency, and Transaction Amount features in the new data frame that grouped by customerId features.
+
+For the Recency feature, we can subtract the current date with the maximum value of transactionDate (latest transaction). Since our dataset only contains 2016 transactional data, we will set 1st January 2017 as our current date.
+
+For the Frequency feature, we count how many transactions were made for every customer using n() function in R.
+
+for the Transaction Amount feature, we calculate the summation of transactionAmount for every customer.
+
+```{r Transforming data, include=FALSE}
+summary(credit_data)
+
+#Time Column
+credit_data <- credit_data %>% separate(transactionDateTime, into = c('transactionDate','transactionTime'),
+                                          sep='T', remove = TRUE)
+credit_data$transactionDate = as.Date(credit_data$transactionDate, format = '%Y-%m-%d')
+
+#Recency-Frequency-Monetary Values Data
+data <- credit_data %>% group_by(customerId) %>% 
+  summarise('Recency' = as.numeric(as.Date('2017-01-01') - max(transactionDate)),
+            'Frequency' = n(),
+            'TransactionAmount' = sum(transactionAmount))
+```
+
+Now we have three main feature for the RFM segmentation. It is similar to any other data analytical case, the first step that we have to do is exploring our dataset, and in this case, we will check every feature distribution using histogram plot using **hist()** function in R.
+
+```{r EDA, echo=FALSE, message=FALSE, warning=FALSE}
+Recency_plot <- ggplot(data, aes(Recency)) +
+         geom_histogram() +
+         labs(x = " ",
+              y = " ",
+           title = "Recency")
+Frequency_plot <- ggplot(data, aes(Frequency)) +
+         geom_histogram() +
+         labs(x = " ",
+              y = " ",
+           title = "Frequency")
+Amount_plot <- ggplot(data, aes(TransactionAmount)) +
+         geom_histogram() +
+         labs(x = " ",
+              y = " ",
+           title = "Transaction amount")
+Recency_plot/Frequency_plot/Amount_plot
+
+patchwork1 <- Recency_plot/Frequency_plot/Amount_plot
+patchwork1 + plot_annotation(
+  title = 'Histograms of features',
+  caption = 'Our features are right skewed:\n
+  vickman'
+)
+
+```
+
+Our RFM dataset is so right-skewed, and it will be a catastrophic problem in K-Means clustering method since this method using the distance between points as one of its calculation to determine which cluster is the points fitted the most. Log transformation can be used to handle this kind of skewed data, and since we have 0 (zero values) in the data, we will use log(n + 1) to transform our data instead of the ordinary log transformation.
+
+
+```{r logarithimic data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#logarithmic Data
+new_data = data
+row.names(new_data) = new_data$customerId
+new_data$customerId = NULL
+
+new_data$Recency = log(new_data$Recency)
+new_data$Frequency = log(new_data$Frequency + 1)
+new_data$TransactionAmount = log(new_data$TransactionAmount + 1)
+
+
+log_frequency_plot <- ggplot(data, aes(log(Frequency + 1))) +
+  geom_histogram() +
+         labs(x = " ",
+              y = " ",
+           title = "Frequency")
+
+log_recency_plot <- ggplot(data, aes(log(Recency))) +
+  geom_histogram() +
+         labs(x = " ",
+              y = " ",
+           title = "Recency")
+
+log_amount_plot <- ggplot(data, aes(log(TransactionAmount + 1))) +
+  geom_histogram() +
+         labs(x = " ",
+              y =" ",
+           title =  "Transaction amount")
+
+patchwork <- log_frequency_plot/log_recency_plot/log_amount_plot
+patchwork + plot_annotation(
+  title = 'Histograms of transformed features',
+  caption = 'Disclaimer: Transformation was achieved by logarithm \n plus adding 1'
+)
+```
+
+Logarithmic transformation provides better data for K-Means method to calculate and find the best cluster for our data by getting rid much of skewed data in our RFM dataset.
+
+## K-Means Clustering
+
+K-Means clustering method by definition is a type of unsupervised learning which has been used for defining the unlabeled data into groups based on its similarity.
+
+In R, K-Means clustering can be quickly done using kmeans() function. But, we have to find the number of clusters before creating the K-Means model. There are so many ways to find the best number of groups to assign, one of them is by using our business sense and assign the number directly, or we also can use mathematical sense to calculate the similarity between each point.
+
+On this example, we will use the within-cluster sum of squares that measures the variability of the observations within each cluster. We will iteratively calculate the within-cluster sum of squares for every cluster in range of 1 to 10 and choose the group with the lowest value and no further significant changes in value for its next cluster, or often we called it as the **Elbow Method**.
+
+```{r Elbow_plot, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+
+fviz_nbclust(new_data, kmeans, method = "wss")+ 
+  geom_vline(xintercept = 4, lty =2, col = 'red') +
+  theme_minimal() +
+  plot_annotation(
+  caption = 'Scree plot\n Choosing the number of clusters'
+)
+```
+
+Using the elbow method, we will assign four groups as our number of clusters. Using kmeans() function in R we only need to put cluster number in centers parameter and assign the clustering results into our dataset.
+
+```{r Segmentation, echo=FALSE, message=FALSE, warning=FALSE}
+#Build K-Means Model and Assign The Results into segment
+data$segment = kmeans(new_data,
+                      centers = 4, 
+                      nstart = 50)$cluster
+
+#Create Segment Summary
+data %>% 
+  group_by(segment) %>% 
+  summarise('Recency' = mean(Recency),
+            'Frequency' = mean(Frequency),
+            'TransactionAmount' = mean(TransactionAmount),
+            'member' = n()) %>% 
+  mutate(TransactionAmount = comma(TransactionAmount),
+         member = comma(member)) %>% 
+  knitr::kable(col.names = c("Segment", "Recency", "Frequency", "Transaction amount", "Members"),
+               align = "lllrl",
+               digits = 2,
+               caption = "RFM Summary per Segment")
+```
+
+So, we have four groups and let’s discuss the detail for every group:
+
+1. Segment-1 (Silver): Middle-class customer with second-most considerable transactions frequency and spending amount.
+
+2. Segment-2 (Gold): Most valuable customers who have the most significant spending amount and the one who make transactions the most.
+
+3. Segment-3 (Bronze): Commoner customer with low transactions frequency and low spending amount. But, this segment has the largest number of the customer.
+
+4. Segment-4 (Inactive): Inactive/less-active customers whom latest transactions had done in more than a month ago. This segment has the lowest number of customer, transaction frequency, and transaction amount.
+
+
+Now, we have four groups of customer with detailed RFM behaviour from each group. Usually this information can be used for arrange marketing strategy that well-targeted to the customers who share similar behaviour. Recency, Frequency, and Monetary Values segmentation is simple but useful for knowing your customer better and aiming an efficient and optimum marketing strategy.
+
+
+
+
+
+
+
+
+
+

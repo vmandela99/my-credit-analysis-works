@@ -1,0 +1,271 @@
+---
+title: "Credit modelling"
+author: "Victor Mandela"
+date: "7/21/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+loan_data <- readRDS("loan_data_ch1.rds")
+```
+
+You want to get an idea of the number, and percentage of defaults. Defaults are rare, so you always want to check what the proportion of defaults is in a loan dataset. 
+
+The response variable loan_status, where 1 represents a default, and 0 represents non-default.
+
+```{r}
+# View the structure of loan_data
+str(loan_data)
+
+# Load the gmodels package 
+library(gmodels)
+
+# Call CrossTable() on loan_status
+CrossTable(loan_data$loan_status)
+
+# Call CrossTable() on grade and loan_status
+CrossTable(x = loan_data$grade, y = loan_data$loan_status, prop.r = TRUE, prop.c = F, prop.t = F, prop.chisq = F)
+
+```
+
+## histogram for income
+
+```{r}
+# Create histogram of loan_amnt: hist_1
+hist_1 <- hist(loan_data$loan_amnt)
+
+# Print locations of the breaks in hist_1
+hist_1$breaks
+
+# Change number of breaks and add labels: hist_2
+hist_2 <- hist(loan_data$loan_amnt, breaks = 200, xlab = "Loan amount", 
+               main = "Histogram of the loan amount")
+```
+
+Bingo! Note that there are some high peaks at round values: 5000, 10000, 15000,… People tend to borrow round numbers. Makes sense, right?
+
+## Outliers
+
+There is a lot of blank space on the right-hand side of the plot. This is an indication of possible outliers. We will look at a scatterplot to verify this.
+
+Note: If outliers are observed for several variables, it might be useful to look at bivariate plots. It's possible the outliers belong to the same observation. If so, there is even more reason to delete the observation because it is more likely that some information stored in it is wrong.
+
+```{r}
+# Plot the age variable
+plot(loan_data$age, ylab = "Age")
+
+# Save the outlier's index to index_highage
+index_highage <- which(loan_data$age > 122)
+
+# Create data set new_data with outlier deleted
+new_data <- loan_data[-index_highage, ]
+
+# Make bivariate scatterplot of age and annual income
+plot(loan_data$age, loan_data$annual_inc, xlab = "Age", ylab = "Annual Income")
+
+```
+
+## Missing values
+
+We can either:- delete, replace or keep missing values. We can keep missing values using coarse classification.
+
+Coarse classification allows you to simplify your data and improve the interpretability of your model. Coarse classification requires you to bin your responses into groups that contain ranges of values. You can use this binning technique to place all NAs in their own bin.
+
+
+```{r}
+# Look at summary of loan_data
+summary(loan_data$int_rate)
+
+# Get indices of missing interest rates: na_index
+na_index <- which(is.na(loan_data$int_rate))
+
+# Remove observations with missing interest rates: loan_data_delrow_na
+loan_data_delrow_na <- loan_data[-na_index, ]
+
+# Make copy of loan_data
+loan_data_delcol_na <- loan_data
+
+# Delete interest rate column from loan_data_delcol_na
+loan_data_delcol_na$int_rate <- NULL
+
+```
+
+```{r}
+## Coarse classification
+# Make the necessary replacements in the coarse classification example below 
+loan_data$ir_cat <- rep(NA, length(loan_data$int_rate))
+
+loan_data$ir_cat[which(loan_data$int_rate <= 8)] <- "0-8"
+loan_data$ir_cat[which(loan_data$int_rate > 8 & loan_data$int_rate <= 11)] <- "8-11"
+loan_data$ir_cat[which(loan_data$int_rate > 11 & loan_data$int_rate <= 13.5)] <- "11-13.5"
+loan_data$ir_cat[which(loan_data$int_rate > 13.5)] <- "13.5+"
+loan_data$ir_cat[which(is.na(loan_data$int_rate))] <- "Missing"
+
+loan_data$ir_cat <- as.factor(loan_data$ir_cat)
+
+# Look at your new variable using plot()
+plot(loan_data$ir_cat)
+```
+
+## Modelling
+
+To make your training and test sets, you should first set a seed using set.seed(). Seeds allow you to create a starting point for randomly generated numbers, so that each time your code is run the same answer is generated. The advantage of doing this in your sampling is that you or anyone else can recreate the exact same training and test sets by using the same seed.
+
+```{r}
+# Set seed of 567
+set.seed(567)
+
+# Store row numbers for training set: index_train
+index_train <- sample(1:nrow(loan_data), 2 / 3 * nrow(loan_data))
+
+# Create training set: training_set
+training_set <- loan_data[index_train, ]
+
+# Create test set: test_set
+test_set <- loan_data[-index_train, ]
+```
+
+## creating confusion matrix
+
+```{r}
+# Create confusion matrix
+conf_matrix <- table(test_set$loan_status, model_pred)
+
+# Compute classification accuracy
+(6092 + 349) / nrow(test_set)
+
+# Compute sensitivity
+349 / 1037
+```
+
+## logistic regression
+
+```{r}
+# Build a glm model with variable ir_cat as a predictor
+log_model_cat <- glm(formula = loan_status ~ ir_cat, family = "binomial",
+                     data = training_set)
+
+# Print the parameter estimates 
+log_model_cat
+
+# Look at the different categories in ir_cat using table()
+table(loan_data$ir_cat)
+```
+
+```{r}
+# Build the logistic regression model
+log_model_multi <- glm(loan_status ~ age + ir_cat + grade + loan_amnt +
+                      annual_inc , family = "binomial", data = training_set)
+
+# Obtain significance levels using summary()
+summary(log_model_multi)
+```
+
+After having obtained all the predictions for the test set elements, it is useful to get an initial idea of how good the model is at discriminating by looking at the range of predicted probabilities. A small range means that predictions for the test set cases do not lie far apart, and therefore the model might not be very good at discriminating good from bad customers. With low default percentages, you will notice that in general, very low probabilities of default are predicted. It's time to have a look at a first model.
+
+```{r}
+# Build the logistic regression model
+predictions_all_small <- predict(log_model_small, newdata = test_set, type = "response")
+
+# Look at the range of the object "predictions_all_small"
+range(predictions_all_small)
+```
+
+## big models expanding the range
+
+```{r}
+# Build the logistic regression model
+log_model_full <- glm(loan_status ~ ., family = "binomial", data = training_set)
+
+# Make PD-predictions for all test set elements using the the full logistic regression model
+predictions_all_full <- predict(log_model_full, newdata = test_set, type = "response")
+
+# Look at the predictions range
+range(predictions_all_full)
+
+```
+
+## Specifying a cut-off
+
+In the first argument, we are testing whether a certain value in the predictions-vector is bigger than 0.3. We get representation of "default" and "no default", respectively.
+
+### comparing cut-offs
+
+```{r}
+# Fit the logit, probit and cloglog-link logistic regression models
+log_model_logit <- glm(loan_status ~ age + emp_cat + ir_cat + loan_amnt,
+                       family = binomial(link = logit), data = training_set)
+log_model_probit <- glm(loan_status ~ age + emp_cat + ir_cat + loan_amnt,
+                        family =  binomial(link = probit), data = training_set)
+log_model_cloglog <- glm(loan_status ~ age + emp_cat + ir_cat + loan_amnt,
+                         family = binomial(link = cloglog), data = training_set)
+
+# Make predictions for all models using the test set
+predictions_logit <- predict(log_model_logit, newdata = test_set, type = "response")
+predictions_probit <- predict(log_model_probit, newdata = test_set, type = "response")
+predictions_cloglog <- predict(log_model_cloglog, newdata = test_set, type = "response")
+
+# Use a cut-off of 14% to make binary predictions-vectors
+cutoff <- 0.14
+class_pred_logit <- ifelse(predictions_logit > cutoff, 1, 0)
+class_pred_probit <- ifelse(predictions_probit > cutoff, 1, 0)
+class_pred_cloglog <- ifelse(predictions_cloglog  > cutoff, 1, 0)
+
+# Make a confusion matrix for the three models
+tab_class_logit <- table(true_val, class_pred_logit)
+tab_class_probit <- table(true_val, class_pred_probit)
+tab_class_cloglog <- table(true_val, class_pred_cloglog)
+
+# Compute the classification accuracy for all three models
+acc_logit <- sum(diag(tab_class_logit)) / nrow(test_set)
+acc_probit <- sum(diag(tab_class_probit)) / nrow(test_set)
+acc_cloglog <- sum(diag(tab_class_cloglog)) / nrow(test_set)
+```
+
+## Decision Trees
+
+We begin with computing the gain of a tree using the GINI-measure.
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
